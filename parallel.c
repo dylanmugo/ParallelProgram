@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 #include <sys/time.h>
-/* The argument now should be a double (not a pointer to a double) */
+//* The argument now should be a double (not a pointer to a double) */
 #define GET_TIME(now) { \
    struct timeval t; \
    gettimeofday(&t, NULL); \
@@ -19,8 +19,8 @@
 #define min(a,b) (((a)<(b))?(a):(b))
 
 
-/* ====================Definig some global simulation constants==================== */
-#define N 1e7
+// Definig some global simulation constants
+#define N 5e7
 
 #define Cc 2.0
 #define Cs 4.0
@@ -34,7 +34,7 @@
 #define Cc_over_C (Cc/C)
 
 
-/* ====================Custom constructs for holding data (pthread output and input, respectively)==================== */
+// Custom constructs for holding data (pthread output and input, respectively)
 typedef struct {
   double W;
   unsigned long long int numR;
@@ -52,12 +52,13 @@ typedef struct {
 } thread_args_t;
 
 
-/* ====================This function will run for each different thread==================== */
+//this function will run for each different thread
+
 void *process_neutron_loop(void *arg_struct){
   // retrieve the arguments that were passed to this function with void* typecast (below, in main() function)
   thread_args_t *args = (thread_args_t *)arg_struct;
   
-  // state variable for random number generator (details of its working principle available in Linux-man page for drand48_r function)
+  // state variable for random number generator 
   struct drand48_data randBuffer;
   // seeeding the RNG with (very) unique seeds for each different thread-id (+1 to avoid division by zero)
   srand48_r(time(NULL)/(args->thread_id+1), &randBuffer);
@@ -71,7 +72,7 @@ void *process_neutron_loop(void *arg_struct){
     unsigned long long int numA = 0;
     unsigned long long int numT = 0;
     
-    // run a randomized simulation for each individual neutron
+    // run a randomised simulation for each individual neutron
     for(int i=1;i<N;i++){
       // re-initialie starting paramters for the neutron
       double theta = 0.0;
@@ -127,7 +128,7 @@ void *process_neutron_loop(void *arg_struct){
 }
 
 
-/* ====================Helper function to write the simulation results to an external file==================== */
+// Helper function to write the simulation results to an external file
 void write_WRAT_data(FILE *fp_WRAT, output_WRAT_t *out_array, long out_arr_len){
   for(long i=0;i<out_arr_len;i++){
     fprintf(fp_WRAT, "%lf %lld %lld %lld\n", out_array[i].W, out_array[i].numR, out_array[i].numA, out_array[i].numT);
@@ -135,7 +136,7 @@ void write_WRAT_data(FILE *fp_WRAT, output_WRAT_t *out_array, long out_arr_len){
 }
 
 
-/* ====================Main function==================== */
+// Main function
 int main(int argc, char **argv){
   // variables for measuring the execution times of the program
   double start_time, end_time, elapsed_time;
