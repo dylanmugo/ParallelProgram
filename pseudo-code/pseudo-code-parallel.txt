@@ -1,136 +1,109 @@
-
-// Parallel Neutron Transport Simulation
-
-// C = Total Cross-section 
-// Cs = Cross-section of scattering
-// Cc = Cross-section of captured
-// One_over_C = 1.0/C
-// Cc_over_C = Cc/C = Probability that neutron will be absorbed
-// W = plate width (also referred to as plate_thickness)
-// L = distance a neutron travels before collision
-// theta = angle to the horizontal that neutron is scattered through (0 – pi radians)
-// randomNum = uniform random number between 0.0 and 1.0
-// x = position of neutron in plate (0 <= x < W)
-// N = quantity of neutrons to be sampled per plate thickness
-// stillBouncing = variable to indicate if a neutron is still bouncing: 1 = True, 0 = False
-// numR, numA, numT = quantity of neutrons Reflected, Absorbed, Transmitted
-// num_cores = number of processor threads to use for the simulation (also used for storing the number of available processor cores)
-// M_PI = variable name for PI (from math.h header); i.e. 3.14159...
-
-// Custom Data Structures:
-// output_WRAT_t = structure to hold one result set (W, numR, numA, numT)
-// thread_args_t = structure to pass arguments to a thread (thread_id, start_thickness, end_thickness, etc.)
-
-/*********** BEGIN **********/
-Start thread-executable function process_neutron_loop(arguments):
-  Retrieve arguments for this thread (thread_id, start_thickness, end_thickness, output_arr_ptr, output_arr_start)
-  Declare random number generator buffer
-  Set random seed for this thread using its unique thread_id
-  
-  output_index = this thread's starting position in the shared output array (output_arr_start)
-  
-  /**** Plate thickness Loop (for this thread's assigned range) ****/
-  For plate_thickness = start_thickness to end_thickness, in increments of THICKNESS_INCREMENT
-    numR, numA, numT = 0;
-    /** Neutron samples loop **/
-    For i = 1 to N
-      theta = 0.0
-      x = 0.0
-      stillBouncing = 1 (true)
-      /** Single neutron loop: following its journey in the plate **/
-      while stillBouncing == 1 (true)
-        generate randomNum
-        L = -One_over_C*log(randomNum)
-        x = x + L*cos(theta)
-        /** Testing to see what happens to the neutron **/
-        if x < 0, so neutron is Reflected:
-          numR++
-          stillBouncing = 0 (false)
-        else if x >= plate_thickness, so neutron is Transmitted
-          numT++
-          stillBouncing = 0 (false)
-        (if x is not < 0 and x is not >= plate_thickness, then the neutron is still in the plate)
-        else if randomNum < Cc_over_C, so neutron is Absorbed
-          numA++
-          stillBouncing = 0 (false)
-        else (neutron not absorbed, so neutron is scattered inside the plate)
-          theta = randomNum*M_PI (angle that neutron is scattered)
-        endif
-      endwhile single neutron loop
-    end Neutron Samples loop
-    
-    Store results in the shared output array:
-      output_arr_ptr[output_index].W = plate_thickness
-      output_arr_ptr[output_index].numR = numR
-      output_arr_ptr[output_index].numA = numA
-      output_arr_ptr[output_index].numT = numT
-    output_index++
-  end Plate Thickness Loop
-  return 0
-end function
-
-Start helper function write_WRAT_data(file_pointer, output_array, array_length)
-  For i = 0 to array_length-1
-    fprintf(file_pointer, output_array[i].W, output_array[i].numR, output_array[i].numA, output_array[i].numT)
-  end For loop
-end function
-
-
-Start main()
-  GET_TIME(start_time);
-  Declare local variables (file pointer fp_WRAT, time variables)
-  
-  Get num_cores = number of online processors from system
-  
-  Parse command line arguments:
-  if argument count < 2
-    Print Usage instructions to user
-    exit program
-  endif
-  if argument count >= 2
-    num_cores = user-provided number of threads (or default if user enters 0 = max. number of available cores)
-    if argument count >= 3
-      fp_WRAT = Open user-provided file path for writing
-    else
-      fp_WRAT = Open default file "data/WRAT_parallel.dat" for writing
-    endif
-  endif
-  
-  Calculate total number of thickness iterations for the whole simulation
-  Calculate load_per_core = number of iterations each thread will handle
-  Calculate thickness_increment_per_core = range of thickness values each thread will handle
-  
-  Declare arrays for threads, thread arguments, and the shared output results
-  
-  /**** Thread Creation Loop ****/
-  For i = 0 to num_cores-1
-    Set up simulation_args for thread i:
-      thread_id = i
-      start_thickness = START_THICKNESS + i*thickness_increment_per_core
-      end_thickness = minimum of (START_THICKNESS + (i+1)*thickness_increment_per_core) or (END_THICKNESS)
-      output_arr_ptr = pointer to the shared output_WRAT_array
-      output_arr_start = starting index for this thread in the shared array (i*load_per_core)
-    
-    Create thread i, passing it the process_neutron_loop function and its simulation_args
-    if thread creation fails
-      print error and exit
-    endif
-  end Thread Creation Loop
-  
-  /**** Thread Joining Loop (wait for all threads to finish) ****/
-  For i = 0 to num_cores-1
-    Wait for thread i to complete its execution
-    if thread joining fails
-      print error and exit
-    endif
-  end Thread Joining Loop
-  
-  Call write_WRAT_data(fp_WRAT, output_WRAT_array, num_thickness_iterations)
-  close file fp_WRAT
-  
-  GET_TIME(end_time)
-  elapsed_time = end_time – start_time
-  Print elapsed_time to screen
-  
-  return 0
-end main
+// ================= Parallel Neutron Transport Simulation =================
+//
+//   C          = total cross-section (Cc + Cs)
+//   Cs         = cross-section for scattering
+//   Cc         = cross-section for capture
+//   One_over_C = 1.0 / C used in path length calculation
+//   Cc_over_C  = Cc / C gives the probability of absorption
+//   W          = plate thickness (also referred to as plate_width)
+//   L          = distance travelled by neutron before next collision
+//   theta      = scattering angle in radians (0 to pi)
+//   randomNum  = random number between 0.0 and 1.0
+//   x          = horizontal position of neutron in the plate
+//   N          = number of neutrons fired per thickness
+//   stillBouncing = control flag (1 = neutron still moving, 0 = stopped)
+//   numR, numA, numT = counters for reflected, absorbed, transmitted
+//   num_cores  = number of processor threads for simulation
+//   M_PI       = value for pi (from <math.h>)
+//
+// ------------------------------------------------------------------------------------
+//
+// Custom data structures:
+//   output_WRAT_t  = stores one set of results (W, numR, numA, numT)
+//   thread_args_t  = holds arguments for each thread (thread_id, start_thickness,
+//                    end_thickness, pointer to shared array, starting index)
+//
+// ------------------------------------------------------------------------------------
+//
+// Thread function (process_neutron_loop):
+//    Get arguments passed to this thread (id, start/end thickness, output array info)
+//   Set up random number generator buffer and seed for this thread
+//   Set output_index = starting index for this thread in shared results array
+//
+//   For each plate_thickness from start_thickness up to end_thickness, step by THICKNESS_INCREMENT:
+//       - Reset numR, numA, numT = 0
+//
+//       For i = 1 to N (each neutron):
+//           - Initialise: theta = 0, x = 0, stillBouncing = 1
+//
+//           While stillBouncing == 1:
+//                Generate a random number (randomNum)
+//                Calculate free path length: L = -One_over_C * log(randomNum)
+//                Update position: x = x + L * cos(theta)
+//
+//               - If x < 0 neutron reflected, numR++ and stop loop (stillBouncing = 0)
+//               - Else if x >= plate_thickness neutron transmitted, numT++ and stop
+//               - Else if randomNum < Cc_over_C  neutron absorbed, numA++ and stop
+//               - Else → neutron scattered, update angle: theta = randomNum * π
+//           End while (end of single neutron path)
+//
+//       End For (all neutrons fired at this thickness)
+//
+//     Save results into output array at output_index:
+//           output_arr_ptr[output_index].W = plate_thickness
+//           output_arr_ptr[output_index].numR = numR
+//           output_arr_ptr[output_index].numA = numA
+//           output_arr_ptr[output_index].numT = numT
+//        Increment output_index
+//
+//   End For (all thickness values handled by this thread)
+//
+//   //Return 0 when finished
+//
+// 
+//
+// Helper function (write_WRAT_data):
+//   Input: file pointer output array array length
+//   -   For each element of output array (i = 0 to length-1):
+//          Write a line to file with values:
+//           W, numR, numA, numT
+//
+// ------------------------------------------------------------------------------------
+//
+// Main program:
+//   - Record start time (GET_TIME)
+//   - Declare local variables (output file pointer, timers, etc.)
+//
+//   - Get number of processor cores from system (sysconf)
+//   - Parse command line arguments:
+//       If argc < 2  print usage message and exit
+//       Else:
+//           num_cores = threads requested (or all cores if user passed 0)
+//           If argc >= 3 open output file
+//           Else  open default file "data/WRAT_parallel.dat"
+//
+//   - Work out total number of thickness iterations
+//   - Calculate load_per_core = how many iterations each thread does
+//   - Calculate thickness_increment_per_core = range of W values for each thread
+//
+//   - Declare arrays for pthread_t, thread_args_t, and results buffer
+//
+//   - For i = 0 to num_cores-1 (thread creation loop):
+//       - Fill in simulation_args[i] with id, thickness range, output array, and offset
+//       - Create thread i, passing process_neutron_loop and its arguments
+//       - If creation fails = print error and exit
+//
+//    For i = 0 to num_cores-1 (thread join loop):
+//       - Wait for thread i to finish
+//       - If join fails  print error and exit
+//
+//   - If DEBUG_LEVEL > 0 print results to terminal
+//   Call write_WRAT_data(fp_WRAT, output_array, num_thickness_iterations)
+//   - Close output file
+//
+//    Record end time and compute elapsed = end - start
+//    Print elapsed time (seconds and minutes)
+//
+//    Return 0 (successful exit)
+//
+// ====================================================================================
